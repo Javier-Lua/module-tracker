@@ -28,8 +28,6 @@ const NUSModuleTracker = () => {
   const chartColors = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#f97316', '#ef4444', '#14b8a6', '#a855f7'];
   const semesterOptions = ['Semester 1', 'Semester 2', 'Special Term 1', 'Special Term 2'];
   
-  // Removed defaultModuleTypes - now only uses gradRequirements.moduleTypes
-
   const gradePoints = {
     'A+': 5.0, 'A': 5.0, 'A-': 4.5, 'B+': 4.0, 'B': 3.5, 'B-': 3.0,
     'C+': 2.5, 'C': 2.0, 'D+': 1.5, 'D': 1.0, 'F': 0.0, 'S': null, 'U': null
@@ -261,8 +259,37 @@ const NUSModuleTracker = () => {
             grade: values[7] || ''
           };
         }).filter(module => module.code && module.name);
+
+        // Extract new module types from imported data and update gradRequirements
+        const newModuleTypes = new Set();
+        importedModules.forEach(module => {
+          if (module.moduleType && module.moduleType.trim() !== '') {
+            newModuleTypes.add(module.moduleType);
+          }
+        });
+
+        // Update graduation requirements with new module types
+        let typesToAdd = [];
+        if (newModuleTypes.size > 0) {
+          const currentTypes = new Set((gradRequirements.moduleTypes || []).map(t => t.name));
+          typesToAdd = Array.from(newModuleTypes).filter(type => !currentTypes.has(type));
+          
+          if (typesToAdd.length > 0) {
+            const newTypeObjects = typesToAdd.map(typeName => ({
+              name: typeName,
+              requiredMCs: 20, // Default value
+              color: 'indigo' // Default color
+            }));
+            
+            setGradRequirements(prev => ({
+              ...prev,
+              moduleTypes: [...(prev.moduleTypes || []), ...newTypeObjects]
+            }));
+          }
+        }
+
         setModules([...modules, ...importedModules]);
-        alert(`Successfully imported ${importedModules.length} modules!`);
+        alert(`Successfully imported ${importedModules.length} modules!${typesToAdd.length > 0 ? ` Added ${typesToAdd.length} new module types to graduation requirements.` : ''}`);
       } catch (error) {
         alert('Error importing CSV file. Please check the format.');
         console.error('CSV import error:', error);
