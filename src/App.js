@@ -19,6 +19,7 @@ const NUSModuleTracker = () => {
   const [gpa, setGpa] = useState(0);
   const [totalMCs, setTotalMCs] = useState(0);
   const [filterSemester, setFilterSemester] = useState('All');
+  const [filterModuleType, setFilterModuleType] = useState('All');
   const [filterFocusArea, setFilterFocusArea] = useState('All');
   const [targetGPA, setTargetGPA] = useState('');
   const [gpaSpeculation, setGpaSpeculation] = useState(null);
@@ -26,20 +27,67 @@ const NUSModuleTracker = () => {
 
   const chartColors = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#f97316', '#ef4444', '#14b8a6', '#a855f7'];
   const semesterOptions = ['Semester 1', 'Semester 2', 'Special Term 1', 'Special Term 2'];
+  
+  // Removed defaultModuleTypes - now only uses gradRequirements.moduleTypes
+
   const gradePoints = {
     'A+': 5.0, 'A': 5.0, 'A-': 4.5, 'B+': 4.0, 'B': 3.5, 'B-': 3.0,
     'C+': 2.5, 'C': 2.0, 'D+': 1.5, 'D': 1.0, 'F': 0.0, 'S': null, 'U': null
   };
 
+  // Graduation Requirements Tracking - Start with empty module types
+  const defaultRequirements = {
+    totalMCs: 160,
+    moduleTypes: [] // Changed from pre-populated to empty array
+  };
+
+  const [gradRequirements, setGradRequirements] = useState(() => {
+    try {
+      const saved = localStorage.getItem('gradRequirements');
+      // Start with empty requirements if nothing saved
+      return saved ? JSON.parse(saved) : defaultRequirements;
+    } catch (error) {
+      console.error('Error loading grad requirements:', error);
+      return defaultRequirements;
+    }
+  });
+
+  const [showRequirementsModal, setShowRequirementsModal] = useState(false);
+
+  // Data migration and loading
   useEffect(() => {
     const savedModules = localStorage.getItem('nusModules');
     const savedExpanded = localStorage.getItem('expandedSemesters');
     
     if (savedModules) {
-      setModules(JSON.parse(savedModules));
+      try {
+        const parsedModules = JSON.parse(savedModules);
+        // Clean and validate module data
+        const cleanedModules = parsedModules.map(module => ({
+          id: module.id || Date.now() + Math.random(),
+          semester: module.semester || '',
+          code: module.code || '',
+          name: module.name || '',
+          mc: typeof module.mc === 'number' ? module.mc : 4,
+          moduleType: module.moduleType || module.focusArea || '', // Handle legacy focusArea
+          focusArea: module.focusArea || '',
+          workload: module.workload || '',
+          grade: module.grade || ''
+        })).filter(module => module.code && module.name); // Remove invalid modules
+        
+        setModules(cleanedModules);
+      } catch (error) {
+        console.error('Error parsing saved modules:', error);
+        setModules([]);
+      }
     }
     if (savedExpanded) {
-      setExpandedSemesters(new Set(JSON.parse(savedExpanded)));
+      try {
+        setExpandedSemesters(new Set(JSON.parse(savedExpanded)));
+      } catch (error) {
+        console.error('Error parsing expanded semesters:', error);
+        setExpandedSemesters(new Set());
+      }
     }
   }, []);
 
@@ -49,9 +97,26 @@ const NUSModuleTracker = () => {
     calculateGPA();
   }, [modules, expandedSemesters]);
 
+  useEffect(() => {
+    localStorage.setItem('gradRequirements', JSON.stringify(gradRequirements));
+  }, [gradRequirements]);
+
+  // Data validation function
+  const validateModule = (module) => {
+    return module && 
+           typeof module === 'object' &&
+           module.code && 
+           module.name &&
+           typeof module.mc === 'number';
+  };
+
   const calculateGPA = () => {
     let totalGradePoints = 0, totalGradedMCs = 0, mcCount = 0;
-    modules.forEach(module => {
+    
+    // FIX: Safe iteration
+    (modules || []).forEach(module => {
+      if (!validateModule(module)) return; // Skip invalid modules
+      
       mcCount += module.mc;
       if (module.grade && module.grade in gradePoints && gradePoints[module.grade] !== null) {
         totalGradePoints += gradePoints[module.grade] * module.mc;
@@ -64,7 +129,11 @@ const NUSModuleTracker = () => {
 
   const calculateSemesterGPA = (semesterModules) => {
     let totalGradePoints = 0, totalGradedMCs = 0;
-    semesterModules.forEach(module => {
+    
+    // FIX: Safe iteration
+    (semesterModules || []).forEach(module => {
+      if (!validateModule(module)) return;
+      
       if (module.grade && module.grade in gradePoints && gradePoints[module.grade] !== null) {
         totalGradePoints += gradePoints[module.grade] * module.mc;
         totalGradedMCs += module.mc;
@@ -75,7 +144,11 @@ const NUSModuleTracker = () => {
 
   const getModulesBySemester = (modulesList = modules) => {
     const grouped = {};
-    modulesList.forEach(module => {
+    
+    // FIX: Safe iteration
+    (modulesList || []).forEach(module => {
+      if (!validateModule(module)) return;
+      
       if (!grouped[module.semester]) grouped[module.semester] = [];
       grouped[module.semester].push(module);
     });
@@ -99,9 +172,36 @@ const NUSModuleTracker = () => {
     return { grouped, sortedSemesters };
   };
 
+  const getAllModuleTypes = () => {
+    const types = new Set();
+    
+    // FIX: Safe iteration for modules
+    (modules || []).forEach(module => {
+      if (!validateModule(module)) return;
+      
+      if (module.moduleType && module.moduleType.trim() !== '') {
+        types.add(module.moduleType);
+      }
+    });
+    
+    // FIX: Safe iteration for gradRequirements - only get from requirements
+    if (gradRequirements && gradRequirements.moduleTypes) {
+      gradRequirements.moduleTypes.forEach(type => {
+        if (type && type.name) types.add(type.name);
+      });
+    }
+    
+    // Removed defaultModuleTypes - only use configured requirements
+    return ['All', ...Array.from(types).sort()];
+  };
+
   const getAllFocusAreas = () => {
     const areas = new Set();
-    modules.forEach(module => {
+    
+    // FIX: Safe iteration
+    (modules || []).forEach(module => {
+      if (!validateModule(module)) return;
+      
       if (module.focusArea && module.focusArea.trim() !== '' && module.focusArea !== 'None') {
         areas.add(module.focusArea);
       }
@@ -124,9 +224,12 @@ const NUSModuleTracker = () => {
   const collapseAll = () => setExpandedSemesters(new Set());
 
   const addModule = (module) => {
-    const newModule = { ...module, id: modules.length > 0 ? Math.max(...modules.map(m => m.id)) + 1 : 1 };
+    const newModule = { 
+      ...module, 
+      id: modules.length > 0 ? Math.max(...modules.map(m => m.id)) + 1 : 1 
+    };
     setModules([...modules, newModule]);
-    setEditingModule(null); // Close the form after adding
+    setEditingModule(null);
   };
 
   const updateModule = (updatedModule) => {
@@ -141,33 +244,48 @@ const NUSModuleTracker = () => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (e) => {
-      const csvData = e.target.result;
-      const lines = csvData.split('\n').filter(line => line.trim());
-      const importedModules = lines.slice(1).map((line, index) => {
-        const values = line.split(',').map(value => value.trim());
-        return {
-          id: modules.length + index + 1,
-          semester: values[0],
-          code: values[1],
-          name: values[2],
-          mc: parseInt(values[3]) || 4,
-          focusArea: values[4] || '',
-          workload: values[5] || '',
-          grade: values[6] || ''
-        };
-      }).filter(module => module.code && module.name);
-      setModules([...modules, ...importedModules]);
-      alert(`Successfully imported ${importedModules.length} modules!`);
+      try {
+        const csvData = e.target.result;
+        const lines = csvData.split('\n').filter(line => line.trim());
+        const importedModules = lines.slice(1).map((line, index) => {
+          const values = line.split(',').map(value => value.trim());
+          return {
+            id: modules.length + index + 1,
+            semester: values[0] || '',
+            code: values[1] || '',
+            name: values[2] || '',
+            mc: parseInt(values[3]) || 4,
+            moduleType: values[4] || '',
+            focusArea: values[5] || '',
+            workload: values[6] || '',
+            grade: values[7] || ''
+          };
+        }).filter(module => module.code && module.name);
+        setModules([...modules, ...importedModules]);
+        alert(`Successfully imported ${importedModules.length} modules!`);
+      } catch (error) {
+        alert('Error importing CSV file. Please check the format.');
+        console.error('CSV import error:', error);
+      }
       event.target.value = '';
     };
     reader.readAsText(file);
   };
 
   const exportToCSV = () => {
-    const headers = ['Semester', 'Module Code', 'Module Name', 'MC', 'Focus Area(s)', 'Workload (hrs/week)', 'Grade'];
+    const headers = ['Semester', 'Module Code', 'Module Name', 'MC', 'Module Type', 'Focus Area', 'Workload (hrs/week)', 'Grade'];
     const csvContent = [
       headers.join(','),
-      ...modules.map(module => [module.semester, module.code, module.name, module.mc, module.focusArea, module.workload, module.grade || ''].join(','))
+      ...modules.map(module => [
+        module.semester, 
+        module.code, 
+        module.name, 
+        module.mc, 
+        module.moduleType || '', 
+        module.focusArea || '',
+        module.workload, 
+        module.grade || ''
+      ].join(','))
     ].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -185,7 +303,11 @@ const NUSModuleTracker = () => {
       return;
     }
     let currentGradePoints = 0, currentMCs = 0, remainingMCs = 0;
-    modules.forEach(module => {
+    
+    // FIX: Safe iteration
+    (modules || []).forEach(module => {
+      if (!validateModule(module)) return;
+      
       if (module.grade && module.grade in gradePoints && gradePoints[module.grade] !== null) {
         currentGradePoints += gradePoints[module.grade] * module.mc;
         currentMCs += module.mc;
@@ -193,6 +315,7 @@ const NUSModuleTracker = () => {
         remainingMCs += module.mc;
       }
     });
+    
     if (remainingMCs === 0) {
       const finalGPA = currentMCs > 0 ? (currentGradePoints / currentMCs) : 0;
       setGpaSpeculation({
@@ -201,12 +324,14 @@ const NUSModuleTracker = () => {
       });
       return;
     }
+    
     const totalMCsForGPA = currentMCs + remainingMCs;
     const requiredTotalGradePoints = target * totalMCsForGPA;
     const requiredRemainingGradePoints = requiredTotalGradePoints - currentGradePoints;
     const requiredAverageGradePerMC = requiredRemainingGradePoints / remainingMCs;
     const achievable = requiredAverageGradePerMC <= 5.0;
     let recommendedGrade = 'F';
+    
     if (requiredAverageGradePerMC >= 5.0) recommendedGrade = 'A+';
     else if (requiredAverageGradePerMC >= 4.75) recommendedGrade = 'A';
     else if (requiredAverageGradePerMC >= 4.25) recommendedGrade = 'A-';
@@ -217,10 +342,13 @@ const NUSModuleTracker = () => {
     else if (requiredAverageGradePerMC >= 1.75) recommendedGrade = 'C';
     else if (requiredAverageGradePerMC >= 1.25) recommendedGrade = 'D+';
     else if (requiredAverageGradePerMC >= 0.75) recommendedGrade = 'D';
+    
     setGpaSpeculation({
-      currentMCs, remainingMCs,
+      currentMCs, 
+      remainingMCs,
       requiredAverageGradePerMC: requiredAverageGradePerMC.toFixed(2),
-      recommendedGrade, achievable,
+      recommendedGrade, 
+      achievable,
       message: achievable ? 
         `Target ${target} achievable. Need ${requiredAverageGradePerMC.toFixed(2)} pts/MC in ${remainingMCs} MCs (≈${recommendedGrade})` :
         `Target ${target} not achievable. Need ${requiredAverageGradePerMC.toFixed(2)} pts/MC (max 5.0)`
@@ -228,27 +356,52 @@ const NUSModuleTracker = () => {
   };
 
   const getUniqueSemesters = () => {
-    const semesters = [...new Set(modules.map(module => module.semester))];
+    // FIX: Safe iteration
+    const semesters = [...new Set((modules || []).map(module => module.semester).filter(Boolean))];
     return ['All', ...semesters.sort()];
   };
 
   const getFilteredModules = () => {
-    let filtered = modules.filter(module => {
+    let filtered = (modules || []).filter(module => {
+      if (!validateModule(module)) return false;
+      
       const semesterMatch = filterSemester === 'All' || module.semester === filterSemester;
+      const moduleTypeMatch = filterModuleType === 'All' || module.moduleType === filterModuleType;
       const focusAreaMatch = filterFocusArea === 'All' || module.focusArea === filterFocusArea;
-      return semesterMatch && focusAreaMatch;
+      return semesterMatch && moduleTypeMatch && focusAreaMatch;
     });
+    
     if (filterSemester !== 'All' && !expandedSemesters.has(filterSemester)) {
       setExpandedSemesters(new Set([...expandedSemesters, filterSemester]));
     }
     return getModulesBySemester(filtered);
   };
 
+  const getModuleTypeStats = () => {
+    const stats = {};
+    
+    // FIX: Safe iteration
+    (modules || []).forEach(module => {
+      if (!validateModule(module)) return;
+      
+      if (module.moduleType && module.moduleType.trim() !== '') {
+        const type = module.moduleType;
+        if (!stats[type]) stats[type] = { count: 0, mcs: 0 };
+        stats[type].count += 1;
+        stats[type].mcs += module.mc;
+      }
+    });
+    return stats;
+  };
+
   const getFocusAreaStats = () => {
     const stats = {};
-    modules.forEach(module => {
-      // Only include modules with non-empty focus areas
-      if (module.focusArea && module.focusArea.trim() !== '' && module.focusArea !== 'None' && module.focusArea !== 'Uncategorized') {
+    
+    // FIX: Safe iteration
+    (modules || []).forEach(module => {
+      if (!validateModule(module)) return;
+      
+      if (module.focusArea && module.focusArea.trim() !== '' && module.focusArea !== 'None') {
         const area = module.focusArea;
         if (!stats[area]) stats[area] = { count: 0, mcs: 0 };
         stats[area].count += 1;
@@ -256,6 +409,20 @@ const NUSModuleTracker = () => {
       }
     });
     return stats;
+  };
+
+  const getModuleTypeChartData = () => {
+    const stats = getModuleTypeStats();
+    const types = Object.keys(stats);
+    return {
+      labels: types,
+      datasets: [{
+        data: types.map(type => stats[type].mcs),
+        backgroundColor: types.map((_, index) => chartColors[index % chartColors.length]),
+        borderColor: '#fff',
+        borderWidth: 2,
+      }],
+    };
   };
 
   const getFocusAreaChartData = () => {
@@ -275,7 +442,7 @@ const NUSModuleTracker = () => {
   const getWorkloadChartData = () => {
     const { grouped, sortedSemesters } = getModulesBySemester();
     const workloads = sortedSemesters.map(semester => {
-      return grouped[semester].reduce((total, module) => total + (parseInt(module.workload) || 0), 0);
+      return (grouped[semester] || []).reduce((total, module) => total + (parseInt(module.workload) || 0), 0);
     });
     return {
       labels: sortedSemesters,
@@ -317,7 +484,11 @@ const NUSModuleTracker = () => {
 
   const getGradedStats = () => {
     let gradedCount = 0, suCount = 0;
-    modules.forEach(module => {
+    
+    // FIX: Safe iteration
+    (modules || []).forEach(module => {
+      if (!validateModule(module)) return;
+      
       if (module.grade) {
         if (module.grade === 'S' || module.grade === 'U') suCount += 1;
         else if (module.grade in gradePoints && gradePoints[module.grade] !== null) gradedCount += 1;
@@ -341,65 +512,31 @@ const NUSModuleTracker = () => {
     setEditingModule({ prefilledSemester: semester });
   };
 
-  // Graduation Requirements Tracking
-  const defaultRequirements = {
-    totalMCs: 160,
-    universityLevel: { ue: 20, ge: 0 },
-    programCore: 0,
-    programElectives: 0,
-    focusAreaMCs: 0
-  };
-
-  const [gradRequirements, setGradRequirements] = useState(() => {
-    const saved = localStorage.getItem('gradRequirements');
-    return saved ? JSON.parse(saved) : defaultRequirements;
-  });
-
-  const [showRequirementsModal, setShowRequirementsModal] = useState(false);
-
-  useEffect(() => {
-    localStorage.setItem('gradRequirements', JSON.stringify(gradRequirements));
-  }, [gradRequirements]);
-
   const calculateGraduationProgress = () => {
-    const ueModules = modules.filter(m => 
-      m.code.startsWith('GE') || m.code.startsWith('UE') || 
-      (m.focusArea && m.focusArea.toLowerCase().includes('unrestricted'))
-    );
-    const ueMCs = ueModules.reduce((sum, m) => sum + m.mc, 0);
-
-    const geModules = modules.filter(m => m.code.startsWith('GE'));
-    const geMCs = geModules.reduce((sum, m) => sum + m.mc, 0);
-
-    const coreModules = modules.filter(m => 
-      m.focusArea && (m.focusArea.toLowerCase().includes('core') || m.focusArea.toLowerCase().includes('foundation'))
-    );
-    const coreMCs = coreModules.reduce((sum, m) => sum + m.mc, 0);
-
-    const electiveModules = modules.filter(m => 
-      m.focusArea && m.focusArea.toLowerCase().includes('elective')
-    );
-    const electiveMCs = electiveModules.reduce((sum, m) => sum + m.mc, 0);
-
-    const focusAreaModules = modules.filter(m => 
-      m.focusArea && !m.focusArea.toLowerCase().includes('core') && 
-      !m.focusArea.toLowerCase().includes('elective') && 
-      !m.focusArea.toLowerCase().includes('unrestricted') &&
-      m.focusArea.trim() !== '' && m.focusArea !== 'None'
-    );
-    const focusAreaMCs = focusAreaModules.reduce((sum, m) => sum + m.mc, 0);
-
-    return {
-      totalProgress: totalMCs,
-      ueProgress: ueMCs,
-      geProgress: geMCs,
-      coreProgress: coreMCs,
-      electiveProgress: electiveMCs,
-      focusAreaProgress: focusAreaMCs
-    };
+    const progress = { totalProgress: totalMCs };
+    
+    // FIX: Safe iteration
+    if (gradRequirements && gradRequirements.moduleTypes) {
+      gradRequirements.moduleTypes.forEach(type => {
+        if (type && type.name) {
+          const typeModules = (modules || []).filter(m => m.moduleType === type.name);
+          progress[type.name] = typeModules.reduce((sum, m) => sum + m.mc, 0);
+        }
+      });
+    }
+    
+    return progress;
   };
 
   const { gradedCount, suCount } = getGradedStats();
+
+  // Get available module types for dropdown (from requirements only - no defaults)
+  const getAvailableModuleTypes = () => {
+    if (!gradRequirements?.moduleTypes?.length) {
+      return []; // Return empty array when no types configured
+    }
+    return gradRequirements.moduleTypes.map(type => type.name).sort();
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -452,6 +589,15 @@ const NUSModuleTracker = () => {
                     ))}
                   </select>
                   <select 
+                    value={filterModuleType} 
+                    onChange={(e) => setFilterModuleType(e.target.value)}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {getAllModuleTypes().map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                  <select 
                     value={filterFocusArea} 
                     onChange={(e) => setFilterFocusArea(e.target.value)}
                     className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -497,7 +643,7 @@ const NUSModuleTracker = () => {
                 Choose File
                 <input type="file" accept=".csv" onChange={handleCsvImport} className="hidden" />
               </label>
-              <p className="text-xs text-gray-500 mt-2">Format: Semester, Code, Name, MC, Focus Area, Workload, Grade</p>
+              <p className="text-xs text-gray-500 mt-2">Format: Semester, Code, Name, MC, Module Type, Focus Area, Workload, Grade</p>
             </div>
 
             {/* Modules List */}
@@ -509,7 +655,7 @@ const NUSModuleTracker = () => {
               <div className="space-y-3">
                 {getFilteredModules().sortedSemesters.map(semester => {
                   const semesterModules = getFilteredModules().grouped[semester];
-                  const semesterMCs = semesterModules.reduce((total, module) => total + module.mc, 0);
+                  const semesterMCs = (semesterModules || []).reduce((total, module) => total + module.mc, 0);
                   const semesterGPA = calculateSemesterGPA(semesterModules);
                   const isExpanded = expandedSemesters.has(semester);
                   
@@ -528,7 +674,7 @@ const NUSModuleTracker = () => {
                               {semesterGPA !== 'N/A' && (
                                 <span className="text-xs text-gray-600">GPA: {semesterGPA}</span>
                               )}
-                              <span className="text-xs text-gray-600">{semesterModules.length} modules</span>
+                              <span className="text-xs text-gray-600">{(semesterModules || []).length} modules</span>
                             </div>
                           </div>
                         </div>
@@ -547,7 +693,7 @@ const NUSModuleTracker = () => {
                       {isExpanded && (
                         <div className="px-4 sm:px-6 pb-4 sm:pb-6 pt-2 bg-gray-50 border-t border-gray-200">
                           <div className="grid gap-3">
-                            {semesterModules.map(module => (
+                            {(semesterModules || []).map(module => (
                               <ModuleCard 
                                 key={module.id} 
                                 module={module} 
@@ -629,6 +775,20 @@ const NUSModuleTracker = () => {
               )}
             </div>
 
+            {/* Module Types Chart */}
+            <div className="bg-white rounded-lg p-4 sm:p-6 border border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-900 mb-4">Module Types</h3>
+              <div className="h-56 sm:h-64">
+                {Object.keys(getModuleTypeStats()).length > 0 ? (
+                  <Pie data={getModuleTypeChartData()} options={pieChartOptions} />
+                ) : (
+                  <div className="h-full flex items-center justify-center text-gray-400 text-sm">
+                    No module type data
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Focus Areas Chart */}
             <div className="bg-white rounded-lg p-4 sm:p-6 border border-gray-200">
               <h3 className="text-sm font-semibold text-gray-900 mb-4">Focus Areas</h3>
@@ -673,7 +833,8 @@ const NUSModuleTracker = () => {
         module={editingModule} 
         onSave={editingModule && editingModule.id ? updateModule : addModule}
         onCancel={() => setEditingModule(null)} 
-        semesterOptions={semesterOptions} 
+        semesterOptions={semesterOptions}
+        moduleTypes={getAvailableModuleTypes()}
       />
 
       <RequirementsModal 
@@ -687,30 +848,52 @@ const NUSModuleTracker = () => {
 };
 
 const GraduationProgressTracker = ({ requirements, progress }) => {
-  const ProgressBar = ({ label, current, required, color = 'indigo', icon = '📚' }) => {
-    const percentage = required > 0 ? Math.min((current / required) * 100, 100) : 0;
-    const isComplete = current >= required;
+  const colorMap = {
+    blue: 'from-blue-400 to-blue-500',
+    indigo: 'from-indigo-400 to-indigo-500',
+    purple: 'from-purple-400 to-purple-500',
+    green: 'from-green-400 to-green-500',
+    yellow: 'from-yellow-400 to-yellow-500',
+    red: 'from-red-400 to-red-500',
+    pink: 'from-pink-400 to-pink-500',
+    teal: 'from-teal-400 to-teal-500'
+  };
+
+  const iconMap = {
+    'Unrestricted Elective': '🎯',
+    'Program Core': '⚡',
+    'Program Elective': '🎨',
+    'General Education': '🌍',
+    'Foundation': '🏗️',
+    'Internship': '💼',
+    'Thesis': '📚'
+  };
+
+  const ProgressBar = ({ type, requiredMCs, color = 'indigo' }) => {
+    const current = progress[type] || 0;
+    const percentage = requiredMCs > 0 ? Math.min((current / requiredMCs) * 100, 100) : 0;
+    const isComplete = current >= requiredMCs;
+    const icon = iconMap[type] || '📚';
     
     return (
       <div className="mb-5 group hover:transform hover:scale-[1.02] transition-all duration-300">
         <div className="flex items-center justify-between text-sm mb-2">
           <div className="flex items-center gap-2">
             <span className="text-base">{icon}</span>
-            <span className="font-semibold text-gray-800">{label}</span>
+            <span className="font-semibold text-gray-800">{type}</span>
           </div>
           <span className={`font-bold ${isComplete ? 'text-green-600' : 'text-gray-600'}`}>
-            {current}/{required}
+            {current}/{requiredMCs}
             {isComplete && <span className="ml-1">✅</span>}
           </span>
         </div>
         
-        {/* Enhanced progress bar with gradient */}
         <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
           <div 
             className={`h-3 rounded-full transition-all duration-1000 ease-out ${
               isComplete 
                 ? 'bg-gradient-to-r from-green-400 to-green-500' 
-                : `bg-gradient-to-r from-${color}-400 to-${color}-500`
+                : `bg-gradient-to-r ${colorMap[color] || 'from-indigo-400 to-indigo-500'}`
             } shadow-sm`}
             style={{ 
               width: `${percentage}%`,
@@ -719,20 +902,18 @@ const GraduationProgressTracker = ({ requirements, progress }) => {
           />
         </div>
         
-        {/* Percentage indicator */}
         <div className="flex justify-between text-xs text-gray-500 mt-1">
           <span>{percentage.toFixed(0)}% complete</span>
-          <span>{isComplete ? 'Completed! 🎉' : `${required - current} MCs left`}</span>
+          <span>{isComplete ? 'Completed! 🎉' : `${requiredMCs - current} MCs left`}</span>
         </div>
       </div>
     );
   };
 
-  const totalPercentage = requirements.totalMCs > 0 
-    ? Math.min((progress.totalProgress / requirements.totalMCs) * 100, 100) 
+  const totalPercentage = requirements?.totalMCs > 0 
+    ? Math.min((progress?.totalProgress || 0) / requirements.totalMCs * 100, 100) 
     : 0;
 
-  // Enhanced overall progress with circular progress indicator
   return (
     <div className="space-y-6">
       {/* Main Progress Header with Circular Progress */}
@@ -768,91 +949,63 @@ const GraduationProgressTracker = ({ requirements, progress }) => {
         
         <div className="space-y-1">
           <div className="text-lg font-bold text-gray-900">
-            {progress.totalProgress} / {requirements.totalMCs} MCs
+            {progress?.totalProgress || 0} / {requirements?.totalMCs || 0} MCs
           </div>
           <div className="text-sm text-gray-600">
-            {Math.max(0, requirements.totalMCs - progress.totalProgress)} MCs remaining
+            {Math.max(0, (requirements?.totalMCs || 0) - (progress?.totalProgress || 0))} MCs remaining
           </div>
         </div>
       </div>
 
       {/* Individual Progress Bars */}
       <div className="space-y-1">
-        {requirements.universityLevel.ue > 0 && (
+        {(requirements?.moduleTypes || []).map((typeReq) => (
           <ProgressBar 
-            label="Unrestricted Electives" 
-            current={progress.ueProgress} 
-            required={requirements.universityLevel.ue}
-            color="blue"
-            icon="🎯"
+            key={typeReq.name}
+            type={typeReq.name}
+            requiredMCs={typeReq.requiredMCs}
+            color={typeReq.color}
           />
-        )}
-
-        {requirements.universityLevel.ge > 0 && (
-          <ProgressBar 
-            label="General Education" 
-            current={progress.geProgress} 
-            required={requirements.universityLevel.ge}
-            color="purple"
-            icon="🌍"
-          />
-        )}
-
-        {requirements.programCore > 0 && (
-          <ProgressBar 
-            label="Program Core" 
-            current={progress.coreProgress} 
-            required={requirements.programCore}
-            color="indigo"
-            icon="⚡"
-          />
-        )}
-
-        {requirements.programElectives > 0 && (
-          <ProgressBar 
-            label="Program Electives" 
-            current={progress.electiveProgress} 
-            required={requirements.programElectives}
-            color="pink"
-            icon="🎨"
-          />
-        )}
-
-        {requirements.focusAreaMCs > 0 && (
-          <ProgressBar 
-            label="Focus Areas" 
-            current={progress.focusAreaProgress} 
-            required={requirements.focusAreaMCs}
-            color="emerald"
-            icon="🎯"
-          />
-        )}
+        ))}
       </div>
 
       {/* Enhanced Tip Card */}
-      <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200">
-        <div className="flex items-start gap-3">
-          <div className="text-lg">💡</div>
-          <div>
-            <div className="font-semibold text-blue-800 text-sm mb-1">Pro Tip</div>
-            <div className="text-xs text-blue-700 space-y-1">
-              <div>Tag modules with keywords in Focus Area:</div>
-              <div>• "Core" or "Foundation" for core modules</div>
-              <div>• "Elective" for program electives</div>
-              <div>• "Unrestricted" for UE modules</div>
+      {(requirements?.moduleTypes || []).length === 0 && (
+        <div className="mt-6 p-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200">
+          <div className="flex items-start gap-3">
+            <div className="text-lg">⚙️</div>
+            <div>
+              <div className="font-semibold text-amber-800 text-sm mb-1">Setup Required</div>
+              <div className="text-xs text-amber-700">
+                Click "Configure" to set up your module types and graduation requirements. 
+                This will sync with the "Add Module" dropdown.
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
 
 const RequirementsModal = ({ show, requirements, onSave, onClose }) => {
-  const [formData, setFormData] = useState(requirements);
+  const [formData, setFormData] = useState(requirements || {});
+  const [newModuleType, setNewModuleType] = useState({ name: '', requiredMCs: 0, color: 'indigo' });
+
+  // Common module types for suggestions (moved from main component)
+  const commonModuleTypes = [
+    'Unrestricted Elective',
+    'Program Core', 
+    'Program Elective',
+    'General Education',
+    'Foundation',
+    'Internship',
+    'Thesis',
+    'Other'
+  ];
 
   useEffect(() => {
-    setFormData(requirements);
+    setFormData(requirements || {});
   }, [requirements]);
 
   if (!show) return null;
@@ -862,24 +1015,77 @@ const RequirementsModal = ({ show, requirements, onSave, onClose }) => {
     onClose();
   };
 
+  const addModuleType = () => {
+    if (newModuleType.name.trim() === '') {
+      alert('Please enter a module type name');
+      return;
+    }
+    if ((formData.moduleTypes || []).some(t => t.name === newModuleType.name)) {
+      alert('Module type already exists');
+      return;
+    }
+    setFormData({
+      ...formData,
+      moduleTypes: [...(formData.moduleTypes || []), { ...newModuleType }]
+    });
+    setNewModuleType({ name: '', requiredMCs: 0, color: 'indigo' });
+  };
+
+  const removeModuleType = (index) => {
+    const newTypes = [...(formData.moduleTypes || [])];
+    newTypes.splice(index, 1);
+    setFormData({ ...formData, moduleTypes: newTypes });
+  };
+
+  const updateModuleType = (index, field, value) => {
+    const newTypes = [...(formData.moduleTypes || [])];
+    newTypes[index] = { ...newTypes[index], [field]: value };
+    setFormData({ ...formData, moduleTypes: newTypes });
+  };
+
+  const quickAddModuleType = (typeName) => {
+    if ((formData.moduleTypes || []).some(t => t.name === typeName)) {
+      return; // Already exists
+    }
+    setFormData({
+      ...formData,
+      moduleTypes: [...(formData.moduleTypes || []), { 
+        name: typeName, 
+        requiredMCs: 20, 
+        color: 'indigo' 
+      }]
+    });
+  };
+
+  const colorOptions = [
+    { value: 'blue', label: 'Blue' },
+    { value: 'indigo', label: 'Indigo' },
+    { value: 'purple', label: 'Purple' },
+    { value: 'green', label: 'Green' },
+    { value: 'yellow', label: 'Yellow' },
+    { value: 'red', label: 'Red' },
+    { value: 'pink', label: 'Pink' },
+    { value: 'teal', label: 'Teal' }
+  ];
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="p-4 sm:p-6 border-b border-gray-200">
           <h3 className="text-base sm:text-lg font-semibold text-gray-900">
             Configure Graduation Requirements
           </h3>
-          <p className="text-xs text-gray-500 mt-1">Set your degree requirements</p>
+          <p className="text-xs text-gray-500 mt-1">Set your degree requirements and module types</p>
         </div>
         
-        <div className="p-4 sm:p-6 space-y-4">
+        <div className="p-4 sm:p-6 space-y-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Total MCs Required *
             </label>
             <input
               type="number"
-              value={formData.totalMCs}
+              value={formData.totalMCs || 0}
               onChange={(e) => setFormData({...formData, totalMCs: parseInt(e.target.value) || 0})}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               placeholder="e.g., 160"
@@ -887,84 +1093,127 @@ const RequirementsModal = ({ show, requirements, onSave, onClose }) => {
             <p className="text-xs text-gray-500 mt-1">Usually 120-180 MCs for most NUS degrees</p>
           </div>
 
+          {/* Module Types Management */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Unrestricted Electives (UE) MCs
-            </label>
-            <input
-              type="number"
-              value={formData.universityLevel.ue}
-              onChange={(e) => setFormData({
-                ...formData, 
-                universityLevel: {...formData.universityLevel, ue: parseInt(e.target.value) || 0}
-              })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="e.g., 20"
-            />
+            <div className="flex items-center justify-between mb-3">
+              <label className="block text-sm font-medium text-gray-700">
+                Module Types & Requirements
+              </label>
+              <span className="text-xs text-gray-500">
+                {(formData.moduleTypes || []).length} types configured
+              </span>
+            </div>
+
+            {/* Quick Add Common Types */}
+            {(formData.moduleTypes || []).length === 0 && (
+              <div className="bg-blue-50 p-4 rounded-lg mb-4 border border-blue-200">
+                <h4 className="text-sm font-medium text-blue-700 mb-2">Quick Setup</h4>
+                <p className="text-xs text-blue-600 mb-3">
+                  Add common module types with one click:
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {commonModuleTypes.map(type => (
+                    <button
+                      key={type}
+                      onClick={() => quickAddModuleType(type)}
+                      className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded text-xs font-medium hover:bg-blue-200 transition-colors"
+                    >
+                      + {type}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Add New Module Type */}
+            <div className="bg-gray-50 p-4 rounded-lg mb-4">
+              <h4 className="text-sm font-medium text-gray-700 mb-3">Add Custom Module Type</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                <input
+                  type="text"
+                  value={newModuleType.name}
+                  onChange={(e) => setNewModuleType({...newModuleType, name: e.target.value})}
+                  placeholder="Type name (e.g., Internship)"
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <input
+                  type="number"
+                  value={newModuleType.requiredMCs}
+                  onChange={(e) => setNewModuleType({...newModuleType, requiredMCs: parseInt(e.target.value) || 0})}
+                  placeholder="Required MCs"
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <select
+                  value={newModuleType.color}
+                  onChange={(e) => setNewModuleType({...newModuleType, color: e.target.value})}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {colorOptions.map(color => (
+                    <option key={color.value} value={color.value}>{color.label}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={addModuleType}
+                className="w-full px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
+              >
+                Add Module Type
+              </button>
+            </div>
+
+            {/* Existing Module Types */}
+            <div className="space-y-3 max-h-64 overflow-y-auto">
+              {(formData.moduleTypes || []).map((type, index) => (
+                <div key={index} className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-lg">
+                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input
+                      type="text"
+                      value={type.name}
+                      onChange={(e) => updateModuleType(index, 'name', e.target.value)}
+                      className="px-3 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <input
+                      type="number"
+                      value={type.requiredMCs}
+                      onChange={(e) => updateModuleType(index, 'requiredMCs', parseInt(e.target.value) || 0)}
+                      className="px-3 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <select
+                      value={type.color}
+                      onChange={(e) => updateModuleType(index, 'color', e.target.value)}
+                      className="px-3 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      {colorOptions.map(color => (
+                        <option key={color.value} value={color.value}>{color.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={() => removeModuleType(index)}
+                    className="px-3 py-1 text-red-600 border border-red-200 rounded text-sm hover:bg-red-50 transition-colors"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {(formData.moduleTypes || []).length === 0 && (
+              <div className="text-center p-6 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-gray-500 text-sm">
+                  No module types configured. Add some to track your progress.
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  These will sync with the "Add Module" dropdown.
+                </p>
+              </div>
+            )}
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              General Education (GE) MCs
-            </label>
-            <input
-              type="number"
-              value={formData.universityLevel.ge}
-              onChange={(e) => setFormData({
-                ...formData, 
-                universityLevel: {...formData.universityLevel, ge: parseInt(e.target.value) || 0}
-              })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="e.g., 0"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Program Core/Foundation MCs
-            </label>
-            <input
-              type="number"
-              value={formData.programCore}
-              onChange={(e) => setFormData({...formData, programCore: parseInt(e.target.value) || 0})}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="e.g., 48"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Program Electives MCs
-            </label>
-            <input
-              type="number"
-              value={formData.programElectives}
-              onChange={(e) => setFormData({...formData, programElectives: parseInt(e.target.value) || 0})}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="e.g., 32"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Focus Area(s) MCs
-            </label>
-            <input
-              type="number"
-              value={formData.focusAreaMCs}
-              onChange={(e) => setFormData({...formData, focusAreaMCs: parseInt(e.target.value) || 0})}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="e.g., 20"
-            />
-          </div>
-
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <p className="text-xs text-blue-800">
-              <strong>Pro Tip:</strong> Use keywords in the Focus Area field when adding modules:
-              <br/>• "Core" or "Foundation" for core modules
-              <br/>• "Elective" for program electives
-              <br/>• "Unrestricted" for UE modules
-              <br/>• Specific focus area names (e.g., "AI", "Algorithms")
+              <strong>How it works:</strong> When adding modules, select the appropriate module type from the dropdown. 
+              The progress tracker will automatically calculate your completion for each type based on the MC requirements set here.
             </p>
           </div>
         </div>
@@ -988,29 +1237,54 @@ const RequirementsModal = ({ show, requirements, onSave, onClose }) => {
   );
 };
 
-const ModuleForm = ({ module, onSave, onCancel, semesterOptions }) => {
+const ModuleForm = ({ module, onSave, onCancel, semesterOptions, moduleTypes }) => {
   const [formData, setFormData] = useState({
-    year: '', semesterPart: 'Semester 1', code: '', name: '', mc: 4, focusArea: '', workload: '', grade: ''
+    year: '', semesterPart: 'Semester 1', code: '', name: '', mc: 4, moduleType: '', focusArea: '', workload: '', grade: ''
   });
 
   useEffect(() => {
     if (module) {
       if (module.id) {
-        const semesterMatch = module.semester.match(/Year (\d+) (.+)/);
+        const semesterMatch = module.semester?.match(/Year (\d+) (.+)/);
         if (semesterMatch) {
-          setFormData({ ...module, year: semesterMatch[1], semesterPart: semesterMatch[2], focusArea: module.focusArea || '' });
+          setFormData({ 
+            ...module, 
+            year: semesterMatch[1], 
+            semesterPart: semesterMatch[2], 
+            moduleType: module.moduleType || '',
+            focusArea: module.focusArea || '' 
+          });
         } else {
-          setFormData({ ...module, year: '', semesterPart: 'Semester 1', focusArea: module.focusArea || '' });
+          setFormData({ 
+            ...module, 
+            year: '', 
+            semesterPart: 'Semester 1', 
+            moduleType: module.moduleType || '',
+            focusArea: module.focusArea || '' 
+          });
         }
       } else if (module.prefilledSemester) {
-        const semesterMatch = module.prefilledSemester.match(/Year (\d+) (.+)/);
+        const semesterMatch = module.prefilledSemester?.match(/Year (\d+) (.+)/);
         if (semesterMatch) {
-          setFormData({ year: semesterMatch[1], semesterPart: semesterMatch[2], code: '', name: '', mc: 4, focusArea: '', workload: '', grade: '' });
+          setFormData({ 
+            year: semesterMatch[1], 
+            semesterPart: semesterMatch[2], 
+            code: '', name: '', mc: 4, 
+            moduleType: '', focusArea: '', workload: '', grade: '' 
+          });
         } else {
-          setFormData({ year: '', semesterPart: 'Semester 1', code: '', name: '', mc: 4, focusArea: '', workload: '', grade: '' });
+          setFormData({ 
+            year: '', semesterPart: 'Semester 1', 
+            code: '', name: '', mc: 4, 
+            moduleType: '', focusArea: '', workload: '', grade: '' 
+          });
         }
       } else {
-        setFormData({ year: '', semesterPart: 'Semester 1', code: '', name: '', mc: 4, focusArea: '', workload: '', grade: '' });
+        setFormData({ 
+          year: '', semesterPart: 'Semester 1', 
+          code: '', name: '', mc: 4, 
+          moduleType: '', focusArea: '', workload: '', grade: '' 
+        });
       }
     }
   }, [module]);
@@ -1029,8 +1303,11 @@ const ModuleForm = ({ module, onSave, onCancel, semesterOptions }) => {
       return;
     }
     const semester = `Year ${formData.year} ${formData.semesterPart}`;
-    onSave({ ...formData, semester: semester, focusArea: formData.focusArea || '' });
+    onSave({ ...formData, semester: semester });
   };
+
+  // Check if moduleTypes is empty
+  const hasConfiguredTypes = moduleTypes && moduleTypes.length > 0;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -1076,10 +1353,40 @@ const ModuleForm = ({ module, onSave, onCancel, semesterOptions }) => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" required />
             </div>
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Module Type</label>
+              <select 
+                value={formData.moduleType} 
+                onChange={(e) => setFormData({...formData, moduleType: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                disabled={!hasConfiguredTypes}
+              >
+                <option value="">Select Type</option>
+                {!hasConfiguredTypes ? (
+                  <option value="" disabled>
+                    No module types configured
+                  </option>
+                ) : (
+                  moduleTypes.map(type => (
+                    <option key={type} value={type}>{type}</option>
+                  ))
+                )}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {!hasConfiguredTypes ? (
+                  <span className="text-amber-600">
+                    ⓘ Configure module types in Graduation Requirements to track progress
+                  </span>
+                ) : (
+                  "Used for graduation progress tracking"
+                )}
+              </p>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Focus Area</label>
               <input type="text" placeholder="e.g., Algorithms & Theory" value={formData.focusArea}
                 onChange={(e) => setFormData({...formData, focusArea: e.target.value})}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <p className="text-xs text-gray-500 mt-1">Specific focus area or specialization</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Workload (hrs/week)</label>
@@ -1087,7 +1394,7 @@ const ModuleForm = ({ module, onSave, onCancel, semesterOptions }) => {
                 onChange={(e) => setFormData({...formData, workload: e.target.value})}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
-            <div className="sm:col-span-2">
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Grade</label>
               <select value={formData.grade} onChange={(e) => setFormData({...formData, grade: e.target.value})}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -1108,6 +1415,24 @@ const ModuleForm = ({ module, onSave, onCancel, semesterOptions }) => {
               </select>
             </div>
           </div>
+
+          {/* Help Card when no module types are configured */}
+          {!hasConfiguredTypes && (
+            <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex items-start gap-3">
+                <div className="text-amber-600 text-lg">💡</div>
+                <div>
+                  <h4 className="font-semibold text-amber-800 text-sm mb-1">
+                    Module Types Not Configured
+                  </h4>
+                  <p className="text-xs text-amber-700">
+                    To track graduation progress, configure module types in the Graduation Requirements.
+                    Click "Configure" in the Graduation Progress section to set up your degree requirements.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
           
           <div className="flex gap-3 mt-6 justify-end">
             <button type="button" onClick={onCancel} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">
@@ -1153,6 +1478,7 @@ const ModuleCard = ({ module, onEdit, onDelete, gradePoints }) => {
       </div>
       
       <div className="text-xs text-gray-500 space-y-1 mb-3">
+        {module.moduleType && <div className="font-medium text-indigo-600">{module.moduleType}</div>}
         {module.focusArea && <div className="truncate">{module.focusArea}</div>}
         {module.workload && <div>Workload: {module.workload} hrs/week</div>}
       </div>
